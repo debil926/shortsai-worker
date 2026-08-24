@@ -23,8 +23,6 @@ from typing import Any
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-import runpod  # type: ignore
-
 from backend_lite.internet_library import InternetLibrary, InternetLibraryError
 from backend_lite.internet_search import InternetSearchError, _search_youtube
 
@@ -138,4 +136,7 @@ def handler(job: dict[str, Any]) -> dict[str, Any]:
         return _search_and_fetch(job_input, Path(tmp))
 
 
-runpod.serverless.start({"handler": handler})
+if __name__ == "__main__":
+    import runpod  # type: ignore
+
+    runpod.serverless.start({"handler": handler})
