@@ -92,22 +92,34 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     library = InternetLibrary(out_dir / "_work")
 
-    manifest = []
+    manifest_path = out_dir / "manifest.json"
+    manifest: list[dict] = []
+    if manifest_path.is_file():
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except Exception:
+            manifest = []
+    already_ok = {row["query"] for row in manifest if isinstance(row, dict) and row.get("ok")}
+
     for i, query in enumerate(queries, start=1):
+        if query in already_ok:
+            print(f"[{i}/{len(queries)}] SKIP (already have it) — {query}")
+            continue
         t0 = time.time()
         result = download_one(query, out_dir, library)
         result["elapsed_seconds"] = round(time.time() - t0, 1)
+        manifest = [row for row in manifest if not (isinstance(row, dict) and row.get("query") == query)]
         manifest.append(result)
         status = "OK" if result["ok"] else "FAIL"
         print(f"[{i}/{len(queries)}] {status} ({result['elapsed_seconds']}s) — {query}"
               + ("" if result["ok"] else f" :: {result.get('error', '')[:200]}"))
-        (out_dir / "manifest.json").write_text(
+        manifest_path.write_text(
             json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8",
         )
 
     ok_count = sum(1 for r in manifest if r["ok"])
     print(f"\nDone: {ok_count}/{len(queries)} clips downloaded to {out_dir}")
-    print(f"Manifest: {out_dir / 'manifest.json'}")
+    print(f"Manifest: {manifest_path}")
     return 0
 
 
