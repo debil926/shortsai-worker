@@ -206,13 +206,14 @@ def _cookie_attempts(renderer_root: Path, settings: dict[str, Any], url: str) ->
     cookie_file = str(section.get("cookies_file") or "").strip()
     configured = str(section.get("cookies_browser") or "auto").strip().lower()
     profile = str(section.get("browser_profile") or "").strip()
-    attempts: list[list[str]] = []
+
+    file_attempts: list[list[str]] = []
     if cookie_file:
         path = Path(cookie_file)
         if not path.is_absolute():
             path = renderer_root / path
         if path.is_file():
-            attempts.append(["--cookies", str(path)])
+            file_attempts.append(["--cookies", str(path)])
 
     browser_names: list[str] = []
     if configured and configured not in {"none", "off", "false"}:
@@ -227,14 +228,18 @@ def _cookie_attempts(renderer_root: Path, settings: dict[str, Any], url: str) ->
             ]
         else:
             browser_names = [configured]
-    for browser in browser_names:
-        value = f"{browser}:{profile}" if profile else browser
-        attempts.append(["--cookies-from-browser", value])
+    browser_attempts = [
+        ["--cookies-from-browser", f"{browser}:{profile}" if profile else browser]
+        for browser in browser_names
+    ]
 
-    # Public downloads should not touch a live browser cookie database unless
-    # they actually need to. This also avoids Chromium "database is locked"
-    # and Windows DPAPI failures being treated as the primary download error.
-    attempts.insert(0, [])
+    # A configured cookies FILE is a deliberate, side-effect-free choice, so it
+    # goes first - the orchestration budget is limited and shouldn't be spent
+    # on anonymous attempts when the caller explicitly set up auth. Live
+    # browser-profile cookies stay opt-in-last: touching a running browser's
+    # cookie database risks "database is locked"/DPAPI failures becoming the
+    # primary download error for something that didn't need it.
+    attempts = file_attempts + [[]] + browser_attempts
     unique: list[list[str]] = []
     for attempt in attempts or [[]]:
         if attempt not in unique:
