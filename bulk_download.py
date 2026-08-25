@@ -12,8 +12,10 @@ Usage (inside the pod, from this directory):
 from __future__ import annotations
 
 import json
+import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -24,6 +26,45 @@ from handler import _probe_duration, _trim, MAX_DURATION_DEFAULT, DOWNLOAD_TIMEO
 
 CLIP_DURATION_SECONDS = 6.0  # a few seconds of headroom for BestMoment to pick from later
 MAX_CANDIDATES_PER_QUERY = 3
+
+POT_SERVER_SCRIPT = Path("/shortsai-worker/bgutil-ytdlp-pot-provider/server/build/main.js")
+POT_SERVER_PORT = 4416
+POT_SERVER_LOG = Path("/shortsai-worker/pot_server.log")
+
+
+def _pot_server_alive() -> bool:
+    try:
+        urllib.request.urlopen(f"http://127.0.0.1:{POT_SERVER_PORT}/ping", timeout=2)
+        return True
+    except Exception:
+        return False
+
+
+def ensure_pot_server() -> None:
+    """The PO-token server has no supervisor, so a terminal/session reset
+    silently kills it and every YouTube download starts failing with
+    "No title found in player responses" again. Self-heal on every run
+    instead of depending on someone noticing and restarting it by hand."""
+    if _pot_server_alive():
+        print("POT server: already running.")
+        return
+    if not POT_SERVER_SCRIPT.is_file():
+        print(f"POT server: script not found at {POT_SERVER_SCRIPT} - skipping "
+              f"(YouTube downloads may hit auth blocks without it).")
+        return
+    with open(POT_SERVER_LOG, "ab") as log_file:
+        subprocess.Popen(
+            ["node", str(POT_SERVER_SCRIPT.name)],
+            cwd=str(POT_SERVER_SCRIPT.parent),
+            stdout=log_file, stderr=subprocess.STDOUT,
+            start_new_session=True,
+        )
+    for _ in range(10):
+        time.sleep(1)
+        if _pot_server_alive():
+            print("POT server: started.")
+            return
+    print("POT server: did not respond after starting - continuing anyway, check pot_server.log.")
 
 
 def download_one(query: str, out_dir: Path, library: InternetLibrary) -> dict:
@@ -83,6 +124,8 @@ def main() -> int:
     if len(sys.argv) < 3:
         print("Usage: python bulk_download.py queries.txt out_dir/")
         return 1
+
+    ensure_pot_server()
 
     queries = [
         line.strip() for line in Path(sys.argv[1]).read_text(encoding="utf-8").splitlines()
