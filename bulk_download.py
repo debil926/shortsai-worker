@@ -11,9 +11,11 @@ Usage (inside the pod, from this directory):
 
 from __future__ import annotations
 
+import concurrent.futures
 import json
 import subprocess
 import sys
+import threading
 import time
 import urllib.request
 from pathlib import Path
@@ -26,6 +28,12 @@ from handler import _probe_duration, _trim, MAX_DURATION_DEFAULT, DOWNLOAD_TIMEO
 
 CLIP_DURATION_SECONDS = 6.0  # a few seconds of headroom for BestMoment to pick from later
 MAX_CANDIDATES_PER_QUERY = 3
+# A residential proxy makes each download slow (real home-connection latency,
+# not RunPod's own fast link) - one at a time made the 96-query batch take
+# hours. These are network-bound, not CPU-bound, so run several in parallel.
+# Each worker gets its own InternetLibrary pointed at a separate subfolder to
+# avoid concurrent writes to one shared index.json.
+PARALLEL_WORKERS = 6
 
 POT_SERVER_SCRIPT = Path("/shortsai-worker/bgutil-ytdlp-pot-provider/server/build/main.js")
 POT_SERVER_PORT = 4416
@@ -133,7 +141,7 @@ def main() -> int:
     ]
     out_dir = Path(sys.argv[2])
     out_dir.mkdir(parents=True, exist_ok=True)
-    library = InternetLibrary(out_dir / "_work")
+    libraries = [InternetLibrary(out_dir / f"_work{i}") for i in range(PARALLEL_WORKERS)]
 
     manifest_path = out_dir / "manifest.json"
     manifest: list[dict] = []
@@ -143,22 +151,30 @@ def main() -> int:
         except Exception:
             manifest = []
     already_ok = {row["query"] for row in manifest if isinstance(row, dict) and row.get("ok")}
+    manifest_lock = threading.Lock()
 
-    for i, query in enumerate(queries, start=1):
-        if query in already_ok:
-            print(f"[{i}/{len(queries)}] SKIP (already have it) — {query}")
-            continue
+    def run_one(i: int, query: str) -> None:
+        library = libraries[i % PARALLEL_WORKERS]
         t0 = time.time()
         result = download_one(query, out_dir, library)
         result["elapsed_seconds"] = round(time.time() - t0, 1)
-        manifest = [row for row in manifest if not (isinstance(row, dict) and row.get("query") == query)]
-        manifest.append(result)
         status = "OK" if result["ok"] else "FAIL"
         print(f"[{i}/{len(queries)}] {status} ({result['elapsed_seconds']}s) — {query}"
               + ("" if result["ok"] else f" :: {result.get('error', '')[:200]}"))
-        manifest_path.write_text(
-            json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8",
-        )
+        with manifest_lock:
+            manifest[:] = [row for row in manifest if not (isinstance(row, dict) and row.get("query") == query)]
+            manifest.append(result)
+            manifest_path.write_text(
+                json.dumps(manifest, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+
+    pending = [(i, q) for i, q in enumerate(queries, start=1) if q not in already_ok]
+    for i, query in enumerate(queries, start=1):
+        if query in already_ok:
+            print(f"[{i}/{len(queries)}] SKIP (already have it) — {query}")
+
+    with concurrent.futures.ThreadPoolExecutor(max_workers=PARALLEL_WORKERS) as pool:
+        list(pool.map(lambda pair: run_one(*pair), pending))
 
     ok_count = sum(1 for r in manifest if r["ok"])
     print(f"\nDone: {ok_count}/{len(queries)} clips downloaded to {out_dir}")
