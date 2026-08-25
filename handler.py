@@ -27,7 +27,13 @@ from backend_lite.internet_library import InternetLibrary, InternetLibraryError
 from backend_lite.internet_search import InternetSearchError, _search_youtube
 
 MAX_CANDIDATES_DEFAULT = 3
-MAX_DURATION_DEFAULT = 120.0
+# Real gameplay footage on YouTube is almost always a full VOD/compilation
+# (10-20+ minutes), not a short clip - filtering candidates by their total
+# duration was rejecting nearly every real result. This only bounds which
+# candidates are eligible; the actual fetch stays capped to the first 120s
+# of whichever video is picked via --download-sections in internet_library.py,
+# so raising it does not increase bandwidth per download.
+MAX_DURATION_DEFAULT = 1800.0
 DOWNLOAD_TIMEOUT_SECONDS = 90
 TRIM_PADDING_SECONDS = 1.0
 
