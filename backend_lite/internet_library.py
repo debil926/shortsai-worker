@@ -466,6 +466,8 @@ def _download_with_extractor(
     timeout: int,
     *,
     renderer_root: Path,
+    stall_budget: int = 60,
+    hard_budget: int = 240,
 ) -> Path:
     command = _yt_dlp_command()
     if not command:
@@ -492,6 +494,9 @@ def _download_with_extractor(
     ]
     if format_selector:
         base_args += ["-f", format_selector]
+    proxy = str((settings.get("yt_dlp") or {}).get("proxy") or "").strip()
+    if proxy:
+        base_args += ["--proxy", proxy]
     runtime_args = _extractor_runtime_args(url)
     cookie_attempts = _cookie_attempts(renderer_root, settings, url)
     strategies = _youtube_strategy_attempts(url)
@@ -564,8 +569,8 @@ def _download_with_extractor(
                 # killed by the orchestration clock.  After [download], file
                 # growth resets a stall watchdog; a separate hard cap remains.
                 extraction_budget = max(15, min(40, remaining))
-                transfer_stall_budget = 60
-                transfer_hard_budget = 240
+                transfer_stall_budget = stall_budget
+                transfer_hard_budget = hard_budget
                 stdout, stderr, timed_out, timeout_phase = _communicate_with_youtube_phase_budget(
                     proc,
                     output_base=output_base,
@@ -711,7 +716,8 @@ class InternetLibrary:
         return updated
 
     def ingest(self, candidate: dict[str, Any], search_query: str, beat_text: str,
-               max_bytes: int = 250 * 1024 * 1024, timeout: int = 50) -> tuple[dict[str, Any], bool]:
+               max_bytes: int = 250 * 1024 * 1024, timeout: int = 50,
+               stall_budget: int = 60, hard_budget: int = 240) -> tuple[dict[str, Any], bool]:
         if not isinstance(candidate, dict):
             raise InternetLibraryError("Неверный интернет-кандидат.")
         signature = _signature(candidate)
@@ -756,6 +762,8 @@ class InternetLibrary:
                     max_bytes,
                     max(8, min(int(timeout), 30)),
                     renderer_root=self.renderer_root,
+                    stall_budget=stall_budget,
+                    hard_budget=hard_budget,
                 )
                 used_url = extractor_url
             except InternetLibraryError as exc:
