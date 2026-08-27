@@ -33,7 +33,7 @@ MAX_CANDIDATES_PER_QUERY = 3
 # hours. These are network-bound, not CPU-bound, so run several in parallel.
 # Each worker gets its own InternetLibrary pointed at a separate subfolder to
 # avoid concurrent writes to one shared index.json.
-PARALLEL_WORKERS = 20
+PARALLEL_WORKERS = 10
 
 POT_SERVER_SCRIPT = Path("/shortsai-worker/bgutil-ytdlp-pot-provider/server/build/main.js")
 POT_SERVER_PORT = 4416
